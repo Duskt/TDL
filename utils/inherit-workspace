@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""
+Temporary solution for https://github.com/Microsoft/vscode/issues/15909
+"""
+from copy import deepcopy
+import json
+import logging
+import os
+import pathlib
+
+sub_workspaces = ["server", "client"]
+
+if str(pathlib.Path(os.curdir).resolve()).split("/")[-1] == "utils":
+    os.chdir("..")
+
+path = pathlib.Path(".vscode/settings.json")
+if not path.exists():
+    logging.warning("Nothing to inherit.")
+    quit()
+
+with open(path) as f:
+    default = json.load(f)
+
+for i in sub_workspaces:
+    subpath = pathlib.Path(f"{i}/.vscode/settings.json")
+    new = deepcopy(default)
+    if subpath.exists():
+        with open(subpath) as f:
+            # python's update function is the entire method of inheritance with this
+            if settings := json.load(f):
+                new.update(settings)
+            if new == settings:
+                logging.info(f"Nothing to change in {i}.")
+                continue
+    else:
+        os.mkdir("/".join(str(subpath).split("/")[:-1]))
+
+    print(new)
+    if input("Overwrite? [Type nothing to proceed]"):
+        print("Skipping")
+        continue
+
+    with open(subpath, "w") as f:
+        json.dump(new, f)

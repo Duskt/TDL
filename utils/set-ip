@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+import os
+import pathlib
+import subprocess
+
+if str(pathlib.Path(os.curdir).resolve()).split("/")[-1] == "utils":
+    os.chdir("..")
+
+with open(".env") as f:
+    lines = f.read().strip().split("\n")
+    vals = {k: v for k, v in [tuple(i.split("=")) for i in lines]}
+
+vals["HOST"] = (
+    subprocess.run(["ipconfig", "getifaddr", "en0"], stdout=subprocess.PIPE)
+    .stdout.decode()
+    .strip()
+)
+with open("../.env", "w") as f:
+    f.write("\n".join(["=".join(i) for i in vals.items()]))

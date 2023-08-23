@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""
+Fun experimental alternative to Protobuf.
+If you think you want to use this, use Protobuf.
+"""
+from collections import defaultdict
+import fnmatch
+import pathlib
+import re
+import os
+from typing import Generator, Self
+
+from genericpath import isdir
+
+TAB_CHAR = " " * 4
+TS_INTERFACE = re.compile(r"export\s+interface\s+(\w+)\s*{([\s\w|:;,'\[\]\"]+)}")
+TS_EXPORT_TYPE = re.compile(r"export\s+type\s+(\w+)\s*=\s*{([\s\w|:;,'\[\]\"]+)}")
+r"""
+Explanation: Spaces have been replaced with SPC so spaces can be used for display purposes.
+class\s+(\w+)
+the name
+
+(?:\(   (?:\w+(?:,SPC*)?)+   \))?  
+inheritance, including multiple classes separated by ,
+
+:\n
+
+(SPC*|\t)   (   (?:\w+:\s*\w+)  \n  (?:\2  (?:\w+:\s*\w+)  \n)+   )
+the attributes. the whole capturing group gets all attribute text
+the first sub capturing group tells us what indentation is being used
+since we capture this, we also have to specify the first attr
+then we capture as many properly indented attrs as poss
+"""
+PY_MODEL = re.compile(
+    r"class\s+(\w+)(?:\((?:\w+(?:, *)?)+\))?:\n( *|\t)((?:\w+:\s*\w+)\n(?:\2(?:\w+:\s*\w+)\n)+)"
+)
+TS_TO_PY = {"number": "int", "string": "str", "Date": "datetime"}
+TS_TYPES = re.compile(rf'\s*(\w+)\s*:\s*({"|".join(TS_TO_PY.keys())})[;,\n]')
+RESERVED_PYTHON = ["id"]
+
+
+class RGlobExcludePath(pathlib.PosixPath):
+    def rglob(
+        self, pattern: str, excludes: str | list[str] = ""
+    ) -> Generator[Self, None, None]:
+        if isinstance(excludes, str):
+            excludes = [excludes]
+        for i in self.glob("*"):
+            if fnmatch.fnmatch(str(i), pattern):
+                yield i
+            if not str(i).split("/")[-1] in excludes:
+                if isdir(i):
+                    yield from i.rglob(pattern, excludes=excludes)
+
+
+class FormattedTSClass:
+    def __init__(self, name: str, code: str):
+        self.uses_datetime = False
+        self.uses_field = False
+        self.name = name
+        self.attrs = self.load_attrs(code)
+
+    def load_attrs(self, code: str):
+        r: list[str] = []
+        for attr_name, ts_attr_type in TS_TYPES.findall(code):
+            py_attr_type = TS_TO_PY.get(ts_attr_type)
+            self.uses_datetime = py_attr_type == "datetime" or self.uses_datetime
+            if attr_name in RESERVED_PYTHON:
+                self.uses_field = True
+                py_attr_type = f"{py_attr_type} = Field(alias='{attr_name}')"
+                attr_name = f"attr_{attr_name}"
+            r.append(f"{attr_name}: {py_attr_type}")
+        return f"\n{TAB_CHAR}".join(r)
+
+    def __str__(self):
+        return f"class {self.name}(BaseModel):\n{TAB_CHAR}{self.attrs}\n\n"
+
+
+class FormattedTypedDict:
+    def __init__(self, name: str, code: str):
+        self.uses_datetime = False
+        self.name = name
+        self.attrs = self.load_attrs(code)
+
+    def load_attrs(self, code: str):
+        r: list[str] = []
+        for attr_name, ts_attr_type in TS_TYPES.findall(code):
+            py_attr_type = TS_TO_PY.get(ts_attr_type)
+            self.uses_datetime = py_attr_type == "datetime" or self.uses_datetime
+            if attr_name in RESERVED_PYTHON:
+                # self.uses_field = True
+                # py_attr_type = f"{py_attr_type} = Field(alias='{attr_name}')"
+                attr_name = f"attr_{attr_name}"
+            r.append(f'"{attr_name}": {py_attr_type}')
+        return f", ".join(r)
+
+    def __str__(self):
+        return f"{self.name} = TypedDict('{self.name}', {{{self.attrs}}})\n"
+
+
+class Imports(defaultdict[str, set[str]]):
+    def __init__(self):
+        super().__init__(set)
+
+    def add_type_imports(self, obj: FormattedTSClass | FormattedTypedDict):
+        if isinstance(obj, FormattedTSClass):
+            self["pydantic"].add("BaseModel")
+            if obj.uses_field:
+                self["pydantic"].add("Field")
+        else:
+            self["typing"].add("TypedDict")
+
+        if obj.uses_datetime:
+            self["datetime"].add("datetime")
+
+    def __str__(self):
+        return (
+            "\n".join(
+                [
+                    (
+                        f"from {name} import {', '.join(objs)}"
+                        if objs
+                        else f"import {name}"
+                    )
+                    for name, objs in self.items()
+                ]
+            )
+            + "\n"
+        )
+
+
+if __name__ == "__main__":
+    if str(pathlib.Path(os.curdir).resolve()).split("/")[-1] == "utils":
+        os.chdir("..")
+
+    p = RGlobExcludePath("client/src/types")
+    for i in p.rglob("*.d.ts", excludes="node_modules"):
+        with open(i) as f:
+            text = f.read()
+            classes = [FormattedTSClass(n, c) for n, c in TS_INTERFACE.findall(text)]
+            tds = [FormattedTypedDict(n, c) for n, c in TS_EXPORT_TYPE.findall(text)]
+            objs = classes + tds
+        if not objs:
+            continue
+
+        new_file = pathlib.PosixPath(
+            f'server/types/{str(i).split("/")[-1].split(".")[0]}.pyi'
+        )
+        output = ""
+        imports = Imports()
+        for i in objs:
+            imports.add_type_imports(i)
+            output += str(i)
+        new_file_contents = f"{imports}\n{output}"
+
+        try:
+            with open(new_file) as f:
+                old_file_contents = f.read()
+        except FileNotFoundError:
+            old_file_contents = ""
+        if old_file_contents == new_file_contents:
+            continue
+
+        if input(
+            f"Create\n{new_file_contents}\n in {new_file}? [Type nothing to proceed]"
+        ):
+            print("Skipping...")
+            continue
+
+        with open(new_file, "w") as f:
+            f.write(new_file_contents)

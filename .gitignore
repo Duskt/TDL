@@ -1,0 +1,6 @@
+.env
+.vscode
+.next
+__pycache__
+*.db
+node_modules
