@@ -118,11 +118,11 @@ class Imports(defaultdict[str, set[str]]):
             "\n".join(
                 [
                     (
-                        f"from {name} import {', '.join(objs)}"
+                        f"from {name} import {', '.join(sorted(objs))}"
                         if objs
                         else f"import {name}"
                     )
-                    for name, objs in self.items()
+                    for name, objs in sorted(self.items())
                 ]
             )
             + "\n"
