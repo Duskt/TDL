@@ -1,5 +1,5 @@
+from api import BaseModel
 from datetime import datetime
-from pydantic import BaseModel
 
 class TaskClass(BaseModel):
     class_id: int

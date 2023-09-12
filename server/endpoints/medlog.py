@@ -9,53 +9,29 @@ Other ideas:
 """
 import json
 import sqlite3
-from typing import Optional
 
+from api import do_logging, get_from_db, model_cast
 from flask import Response, request
-from lightapi import BaseModel, do_logging
-from pydantic import Field, ValidationError
+from pydantic import ValidationError
+from models.medlog import MoodDescGETReq, MoodDescGETRes
 
 DBPATH = "app.db"
+DEFAULT_MOODDESC = "Default"
 
 
-class MoodDesc(BaseModel):
-    _id: int = Field(alias="id")
-    body: str
-    date: str
-
-
-class GetMoodDescReq(BaseModel):
-    date: str
-
-
-class GetMoodDescResp(BaseModel):
-    body: str
-    _id: Optional[int] = Field(alias="id", default=None)
-
-
+@do_logging()
 def get_mood_desc():
     try:
-        params = GetMoodDescReq(**request.args)
-    except ValidationError as _:
+        params = MoodDescGETReq(**request.args)
+    except ValidationError:
         print(f"Invalid GET request {request.args=}")
         return Response(json.dumps({"success": False}), 400)
 
-    values = ("body",)
-    conn = sqlite3.connect(DBPATH)
-    r = conn.execute(
-        f"""
-        SELECT {', '.join(values)} FROM journalentries WHERE date=?;
-    """,
-        (params.date,),
-    ).fetchone()
-    resp = {
-        "success": True,
-        "payload": dict(
-            GetMoodDescResp(**dict(zip(values, r)))
-            if r
-            else GetMoodDescResp(body="Default")
-        ),
-    }
+    keys = ("body",)
+    r = get_from_db(keys, {"date": params.date}, "journalentries")
+    m = model_cast(keys, r, MoodDescGETRes)
+
+    resp = {"success": True, "payload": dict(m)}
     return resp
 
 
@@ -64,10 +40,10 @@ def post_mood_desc():
     conn = sqlite3.connect(DBPATH)
     conn.execute(
         """
-        INSERT OR REPLACE INTO journalentries (body)
-        VALUES(?);
+        INSERT OR REPLACE INTO journalentries (date, body)
+        VALUES(?, ?);
     """,
-        (request.form["desc"],),
+        (request.form["date"], request.form["desc"]),
     )
     conn.commit()
     return {"success": True}

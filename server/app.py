@@ -5,7 +5,7 @@ from endpoints.medlog import post_mood_desc, get_mood_desc
 import dotenv
 
 config = dotenv.dotenv_values(dotenv.find_dotenv())
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 app = Flask(__name__)
 app.logger.level = logging.DEBUG
 DBPATH = "app.db"

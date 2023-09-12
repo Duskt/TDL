@@ -2,14 +2,21 @@
 """
 Temporary solution for https://github.com/Microsoft/vscode/issues/15909
 """
-from copy import deepcopy
 import json
 import logging
 import os
 import pathlib
+from copy import deepcopy
+import re
 
 sub_workspaces = ["server", "client"]
 
+trailingcommas = lambda s: re.sub(r",\n\s*?}", "\n}", s)
+singlecomment = lambda s: re.sub(r"\/\/.+?\n", "\n", s)
+# nesting doesnt work
+multicomment = lambda s: re.sub(r"\/\*.+?\*\/", "\n", s, flags=re.S)
+
+# standardise path
 if str(pathlib.Path(os.curdir).resolve()).split("/")[-1] == "utils":
     os.chdir("..")
 
@@ -19,7 +26,15 @@ if not path.exists():
     quit()
 
 with open(path) as f:
-    default = json.load(f)
+    # remove trailing commas
+    text = trailingcommas(singlecomment(multicomment(f.read())))
+    try:
+        default = json.loads(text)
+    except Exception as e:
+        print(
+            f"Error attempting read on {path.resolve()}. If you aren't getting errors, check comments and trailing commas."
+        )
+        raise e
 
 for i in sub_workspaces:
     subpath = pathlib.Path(f"{i}/.vscode/settings.json")

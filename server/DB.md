@@ -6,9 +6,9 @@ Times are stored in the format which can be obtained via ``str(datetime.datetime
 
 # Tables
 ## journalentries
-- id integer not null primary key autoincrement
+``CREATE TABLE `journalentries` (`date` date not null primary key default CURRENT_DATE, `body` text not null);``
+- date date not null primary key default CURRENT_DATE
 - body text not null
-- date datetime null default CURRENT_TIME
 In the body, stores an entry for a daily mood evaluation. Sometimes referred to as mood description.
 
 ## taskclasses

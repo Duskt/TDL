@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
-require("dotenv").config({'path': '../.env'})
+require("dotenv").config({ 'path': '../.env' })
 module.exports = {
-    /*async rewrites() {
+	/*async rewrites() {
 		return [
 			{
 				source: '/api/:path*',
@@ -9,4 +9,7 @@ module.exports = {
 			},
 		]
 	},*/
+	experimental: {
+		serverActions: true
+	}
 }

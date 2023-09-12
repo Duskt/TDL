@@ -3,18 +3,26 @@
 Fun experimental alternative to Protobuf.
 If you think you want to use this, use Protobuf.
 """
-from collections import defaultdict
 import fnmatch
+import os
 import pathlib
 import re
-import os
-from typing import Generator, Self
+from collections import defaultdict
+from typing import *
 
 from genericpath import isdir
 
+# settings / TODO: process.argv
+IN = "client/src/types/"
+OUT = "server/models/"
 TAB_CHAR = " " * 4
-TS_INTERFACE = re.compile(r"export\s+interface\s+(\w+)\s*{([\s\w|:;,'\[\]\"]+)}")
-TS_EXPORT_TYPE = re.compile(r"export\s+type\s+(\w+)\s*=\s*{([\s\w|:;,'\[\]\"]+)}")
+MODE: Literal["ts2py"] | Literal["py2ts"] = "ts2py"
+# constants
+TS_TO_PY = {"number": "int", "string": "str", "Date": "datetime"}
+RESERVED_PYTHON = ["id"]
+# regexps
+RE_TS_INTERFACE = re.compile(r"export\s+interface\s+(\w+)\s*{([\s\w|:;,'\[\]\"]+)}")
+RE_TS_EXPORT_TYPE = re.compile(r"export\s+type\s+(\w+)\s*=\s*{([\s\w|:;,'\[\]\"]+)}")
 r"""
 Explanation: Spaces have been replaced with SPC so spaces can be used for display purposes.
 class\s+(\w+)
@@ -31,12 +39,10 @@ the first sub capturing group tells us what indentation is being used
 since we capture this, we also have to specify the first attr
 then we capture as many properly indented attrs as poss
 """
-PY_MODEL = re.compile(
+RE_PYMODEL = re.compile(
     r"class\s+(\w+)(?:\((?:\w+(?:, *)?)+\))?:\n( *|\t)((?:\w+:\s*\w+)\n(?:\2(?:\w+:\s*\w+)\n)+)"
 )
-TS_TO_PY = {"number": "int", "string": "str", "Date": "datetime"}
-TS_TYPES = re.compile(rf'\s*(\w+)\s*:\s*({"|".join(TS_TO_PY.keys())})[;,\n]')
-RESERVED_PYTHON = ["id"]
+RE_TS_TYPES = re.compile(rf'\s*(\w+)\s*:\s*({"|".join(TS_TO_PY.keys())})[;,\n]')
 
 
 class RGlobExcludePath(pathlib.PosixPath):
@@ -62,12 +68,12 @@ class FormattedTSClass:
 
     def load_attrs(self, code: str):
         r: list[str] = []
-        for attr_name, ts_attr_type in TS_TYPES.findall(code):
+        for attr_name, ts_attr_type in RE_TS_TYPES.findall(code):
             py_attr_type = TS_TO_PY.get(ts_attr_type)
             self.uses_datetime = py_attr_type == "datetime" or self.uses_datetime
             if attr_name in RESERVED_PYTHON:
                 self.uses_field = True
-                py_attr_type = f"{py_attr_type} = Field(alias='{attr_name}')"
+                py_attr_type = f'{py_attr_type} = Field(alias="{attr_name}")'
                 attr_name = f"attr_{attr_name}"
             r.append(f"{attr_name}: {py_attr_type}")
         return f"\n{TAB_CHAR}".join(r)
@@ -84,18 +90,18 @@ class FormattedTypedDict:
 
     def load_attrs(self, code: str):
         r: list[str] = []
-        for attr_name, ts_attr_type in TS_TYPES.findall(code):
+        for attr_name, ts_attr_type in RE_TS_TYPES.findall(code):
             py_attr_type = TS_TO_PY.get(ts_attr_type)
             self.uses_datetime = py_attr_type == "datetime" or self.uses_datetime
             if attr_name in RESERVED_PYTHON:
                 # self.uses_field = True
-                # py_attr_type = f"{py_attr_type} = Field(alias='{attr_name}')"
+                # py_attr_type = f'{py_attr_type} = Field(alias='{attr_name}')'
                 attr_name = f"attr_{attr_name}"
             r.append(f'"{attr_name}": {py_attr_type}')
         return f", ".join(r)
 
     def __str__(self):
-        return f"{self.name} = TypedDict('{self.name}', {{{self.attrs}}})\n"
+        return f'{self.name} = TypedDict("{self.name}", {{{self.attrs}}})\n'
 
 
 class Imports(defaultdict[str, set[str]]):
@@ -104,7 +110,7 @@ class Imports(defaultdict[str, set[str]]):
 
     def add_type_imports(self, obj: FormattedTSClass | FormattedTypedDict):
         if isinstance(obj, FormattedTSClass):
-            self["pydantic"].add("BaseModel")
+            self["api"].add("BaseModel")
             if obj.uses_field:
                 self["pydantic"].add("Field")
         else:
@@ -118,7 +124,7 @@ class Imports(defaultdict[str, set[str]]):
             "\n".join(
                 [
                     (
-                        f"from {name} import {', '.join(sorted(objs))}"
+                        f'from {name} import {", ".join(sorted(objs))}'
                         if objs
                         else f"import {name}"
                     )
@@ -130,22 +136,24 @@ class Imports(defaultdict[str, set[str]]):
 
 
 if __name__ == "__main__":
+    # standardise path to tdl/
     if str(pathlib.Path(os.curdir).resolve()).split("/")[-1] == "utils":
         os.chdir("..")
 
-    p = RGlobExcludePath("client/src/types")
+    p = RGlobExcludePath(IN)
     for i in p.rglob("*.d.ts", excludes="node_modules"):
         with open(i) as f:
             text = f.read()
-            classes = [FormattedTSClass(n, c) for n, c in TS_INTERFACE.findall(text)]
-            tds = [FormattedTypedDict(n, c) for n, c in TS_EXPORT_TYPE.findall(text)]
-            objs = classes + tds
+            classes = [
+                FormattedTSClass(n, c)
+                for n, c in RE_TS_INTERFACE.findall(text)
+                + RE_TS_EXPORT_TYPE.findall(text)
+            ]
+            objs = classes
         if not objs:
             continue
 
-        new_file = pathlib.PosixPath(
-            f'server/types/{str(i).split("/")[-1].split(".")[0]}.pyi'
-        )
+        new_file = pathlib.PosixPath(f'{OUT}{str(i).split("/")[-1].split(".")[0]}.py')
         output = ""
         imports = Imports()
         for i in objs:
